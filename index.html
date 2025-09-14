@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INCOIS - Unified Ocean Hazard Reporting Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Government Style Palette */
+        :root {
+            --header-bg: #0f4c81; /* Deep Blue */
+            --bg-main: #f0f4f8;
+            --card-bg: #ffffff;
+            --primary-btn: #1976d2; /* Medium Blue */
+            --primary-btn-hover: #1565c0;
+            --secondary-btn: #f7941d; /* Saffron */
+            --secondary-btn-hover: #f57c00;
+            --text-dark: #212121;
+            --text-light: #616161;
+            --border-color: #e0e0e0;
+        }
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .header {
+            background-color: var(--header-bg);
+            color: white;
+        }
+        .btn-primary {
+            background-color: var(--primary-btn);
+            transition: background-color 0.3s;
+        }
+        .btn-primary:hover {
+            background-color: var(--primary-btn-hover);
+        }
+        .btn-secondary {
+            background-color: var(--secondary-btn);
+            transition: background-color 0.3s;
+        }
+        .btn-secondary:hover {
+            background-color: var(--secondary-btn-hover);
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+        }
+        .leaflet-popup-content {
+            font-size: 14px;
+        }
+        .blinking {
+            animation: blinker 1.5s linear infinite;
+        }
+        @keyframes blinker {
+            50% { opacity: 0.3; }
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        /* Ensure modal is on top */
+        #report-modal, #alert-modal, #gemini-modal, #location-modal {
+            z-index: 1000;
+        }
+        #location-modal {
+            z-index: 1001; /* Above other modals */
+        }
+        .leaflet-heat-layer {
+            z-index: 400;
+        }
+        .gemini-btn {
+            background: linear-gradient(to right, #4c82fb, #a259ff);
+            color: white;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+<body class="antialiased">
+    <!-- Main Application Container -->
+    <div id="app" class="h-screen w-screen flex flex-col">
+
+        <!-- Header -->
+        <header class="header shadow-md w-full p-3 flex justify-between items-center z-50">
+            <div class="flex items-center">
+                <img src="https://i.imgur.com/p1f4GAd.png" alt="INCOIS New Logo" class="h-14 w-14 mr-4 rounded-full object-cover">
+                <div>
+                    <h1 class="text-xl font-bold">Unified Ocean Hazard Reporting Platform</h1>
+                    <p class="text-sm opacity-90">Indian National Centre for Ocean Information Services</p>
+                </div>
+            </div>
+            <div id="user-session" class="flex items-center">
+                <!-- Login/Register or User Info will be injected here -->
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="flex-grow overflow-hidden">
+            <!-- App content will be rendered here (Login, Dashboard, etc.) -->
+        </main>
+
+        <!-- Offline Status Indicator -->
+        <div id="offline-indicator" class="hidden fixed bottom-4 left-4 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg flex items-center z-10">
+            <i class="fas fa-wifi mr-2"></i>
+            <span>You are offline. Reports will be synced later.</span>
+        </div>
+    </div>
+
+    <!-- ******************** TEMPLATES ******************** -->
+
+    <!-- Login/Register Page Template -->
+    <template id="login-template">
+        <div class="flex items-center justify-center h-full bg-gray-100">
+            <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
+                <div class="text-center">
+                    <img src="https://i.imgur.com/p1f4GAd.png" alt="INCOIS New Logo" class="w-24 h-24 mx-auto mb-4 rounded-full object-cover">
+                    <h2 id="form-title" class="text-2xl font-bold text-gray-800">Login to Your Account</h2>
+                </div>
+                <form id="auth-form" class="space-y-6">
+                    <div id="register-fields-container" class="hidden space-y-4">
+                        <div>
+                            <label for="role" class="block text-sm font-medium text-gray-700">Select Role</label>
+                            <select id="role" name="role" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                                <option value="Citizen">Citizen / Volunteer</option>
+                                <option value="Official">Disaster Management Official</option>
+                                <option value="Analyst">Data Analyst</option>
+                            </select>
+                        </div>
+                         <div>
+                            <label for="phone" class="block text-sm font-medium text-gray-700">Phone Number</label>
+                            <div class="mt-1 flex rounded-md shadow-sm">
+                                <span class="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm">
+                                    +91
+                                </span>
+                                <input id="phone" name="phone" type="tel" placeholder="9876543210" class="flex-1 block w-full min-w-0 rounded-none rounded-r-md px-3 py-2 bg-white border border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Set Your Location for Alerts</label>
+                            <button type="button" id="select-location-btn" class="w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                                <i class="fas fa-map-marker-alt mr-2"></i> Select Location on Map
+                            </button>
+                            <p id="reg-location-display" class="text-sm mt-2 text-green-600 font-semibold"></p>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="email" class="block text-sm font-medium text-gray-700">Email Address</label>
+                        <input id="email" name="email" type="email" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                        <input id="password" name="password" type="password" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <p id="auth-error" class="text-red-500 text-sm"></p>
+                    <div>
+                        <button id="submit-button" type="submit" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white btn-primary">
+                            Login
+                        </button>
+                    </div>
+                </form>
+                <p class="text-center text-sm text-gray-600">
+                    <a href="#" id="switch-auth-mode" class="font-medium text-indigo-600 hover:text-indigo-500">
+                        Don't have an account? Register
+                    </a>
+                </p>
+            </div>
+        </div>
+    </template>
+
+    <!-- Dashboard Template -->
+    <template id="dashboard-template">
+        <div class="flex h-full">
+            <!-- Left Panel -->
+            <div class="w-1/3 max-w-sm flex flex-col bg-white border-r border-gray-200">
+                <!-- Role-specific content will be injected here -->
+                <div id="left-panel-content" class="flex flex-col h-full"></div>
+            </div>
+
+            <!-- Right Panel (Map & Social Media) -->
+            <div class="w-2/3 flex-grow flex flex-col">
+                <!-- Map -->
+                <div id="map-container" class="flex-grow h-2/3 relative">
+                    <div id="map" class="h-full w-full"></div>
+                    <div class="absolute top-2 right-2 bg-white p-2 rounded shadow-md z-10">
+                        <h4 class="font-bold text-sm mb-1">Legend</h4>
+                        <ul class="text-xs space-y-1">
+                            <li><i class="fas fa-circle text-blue-500 mr-1"></i> Crowd Report</li>
+                            <li><i class="fas fa-fire-alt text-red-600 mr-1"></i> Heatmap Area</li>
+                            <li><i class="fas fa-circle text-yellow-500 mr-1"></i> Social Media</li>
+                        </ul>
+                    </div>
+                </div>
+                <!-- Social Media Dashboard for Official/Analyst -->
+                <div id="social-media-dashboard" class="h-1/3 bg-gray-50 border-t p-4 flex space-x-4 overflow-hidden">
+                    <div class="w-1/3 flex flex-col">
+                        <h3 class="font-bold mb-2 text-center">Social Media Trends</h3>
+                        <div class="bg-white p-2 rounded-lg shadow flex-grow">
+                             <canvas id="sentiment-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="w-1/3 flex flex-col">
+                        <h3 class="font-bold mb-2 text-center">Trending Keywords</h3>
+                        <div id="keyword-cloud" class="bg-white p-3 rounded-lg shadow flex-grow flex flex-wrap items-center justify-center gap-2">
+                           <!-- Keywords injected here -->
+                        </div>
+                    </div>
+                     <div class="w-1/3 flex flex-col">
+                        <h3 class="font-bold mb-2 text-center">Live Feed (Simulated)</h3>
+                        <div id="live-feed" class="bg-white p-3 rounded-lg shadow flex-grow overflow-y-auto space-y-2 text-sm">
+                           <!-- Live tweets injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+    
+    <!-- Left Panel Templates -->
+    <template id="citizen-panel-template">
+        <div class="p-4 border-b">
+            <h2 class="text-lg font-bold">Live Reports & Filters</h2>
+        </div>
+        <div id="filters" class="p-4 space-y-4 border-b"></div>
+        <div id="report-list-container" class="flex-grow overflow-y-auto p-4"></div>
+        <div id="citizen-actions" class="p-4 border-t">
+            <button id="new-report-btn" class="w-full py-3 px-4 text-white font-bold btn-secondary rounded-md flex items-center justify-center">
+                <i class="fas fa-plus-circle mr-2"></i> Submit New Report
+            </button>
+        </div>
+    </template>
+    
+    <template id="official-panel-template">
+         <div class="p-4 border-b"><h2 class="text-lg font-bold">Official Dashboard</h2></div>
+         <div id="high-priority-alerts" class="p-4 border-b bg-red-50">
+            <h3 class="font-semibold text-red-800"><i class="fas fa-exclamation-triangle mr-2"></i>High-Priority Alerts</h3>
+            <ul id="alert-list" class="mt-2 space-y-2 text-sm">
+                <li class="text-gray-500">No active high-priority alerts.</li>
+            </ul>
+         </div>
+        <div id="filters" class="p-4 space-y-4 border-b"></div>
+        <div id="report-list-container" class="flex-grow overflow-y-auto p-4"></div>
+    </template>
+    
+    <template id="analyst-panel-template">
+        <div class="p-4 border-b"><h2 class="text-lg font-bold">Analyst Dashboard</h2></div>
+        <div class="p-4 border-b">
+            <h3 class="font-semibold mb-2">Data Analysis Tools</h3>
+             <canvas id="historical-trends-chart" class="bg-white p-2 rounded-lg shadow"></canvas>
+             <button id="export-data-btn" class="w-full mt-4 py-2 px-4 text-white btn-primary rounded-md"><i class="fas fa-download mr-2"></i>Export Data (CSV)</button>
+        </div>
+        <div id="filters" class="p-4 space-y-4 border-b"></div>
+        <div id="report-list-container" class="flex-grow overflow-y-auto p-4"></div>
+    </template>
+    
+    <!-- Modal for New Report -->
+    <div id="report-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 relative">
+            <button id="close-modal-btn" class="absolute top-3 right-3 text-2xl font-bold text-gray-500 hover:text-gray-800">&times;</button>
+            <h2 class="text-xl font-bold mb-4">Submit Hazard Report</h2>
+            <form id="report-form" class="space-y-4">
+                 <div>
+                    <label for="event-type" class="block text-sm font-medium">Event Type</label>
+                    <select id="event-type" name="eventType" required class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                        <option value="" disabled selected>Select an event...</option>
+                        <option>Tsunami</option>
+                        <option>Storm Surge</option>
+                        <option>High Waves</option>
+                        <option>Coastal Flooding</option>
+                        <option>Unusual Tide</option>
+                        <option>Coastal Damage</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="description" class="block text-sm font-medium">Description</label>
+                    <textarea id="description" name="description" rows="3" required class="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder="Describe what you are observing..."></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Upload Media (Photo/Video)</label>
+                    <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+                        <div class="space-y-1 text-center">
+                            <i class="fas fa-cloud-upload-alt text-4xl text-gray-400"></i>
+                            <div class="flex text-sm text-gray-600">
+                                <label for="file-upload" class="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none">
+                                    <span>Upload a file</span>
+                                    <input id="file-upload" name="file-upload" type="file" class="sr-only">
+                                </label>
+                                <p class="pl-1">or drag and drop</p>
+                            </div>
+                            <p class="text-xs text-gray-500">PNG, JPG, MP4 up to 10MB</p>
+                             <p id="file-name" class="text-sm text-green-600 font-semibold"></p>
+                        </div>
+                    </div>
+                </div>
+                 <p id="geolocation-status" class="text-sm text-center text-gray-500">
+                    <i class="fas fa-map-marker-alt mr-1"></i> Detecting your location...
+                </p>
+                <div class="flex justify-end space-x-3 pt-4">
+                     <button type="button" id="cancel-report-btn" class="py-2 px-4 bg-gray-200 text-gray-700 rounded-md">Cancel</button>
+                    <button type="submit" id="submit-report-btn" class="py-2 px-4 text-white btn-primary rounded-md flex items-center">
+                        <i class="fas fa-paper-plane mr-2"></i>Submit Report
+                    </button>
+                </div>
+                 <p id="offline-save-msg" class="text-sm text-center text-orange-500 mt-2 hidden">
+                    <i class="fas fa-exclamation-circle mr-1"></i> No connection. Report will be saved locally and sent later.
+                 </p>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Alert Modal -->
+    <div id="alert-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 text-center">
+            <div class="text-5xl text-red-500 mb-4"><i class="fas fa-exclamation-triangle"></i></div>
+            <h2 id="alert-title" class="text-2xl font-bold text-gray-800 mb-2">High Activity Alert!</h2>
+            <p id="alert-message" class="text-gray-600 mb-6">A potential hazard event is developing in your area based on multiple reports.</p>
+            <button id="close-alert-btn" class="py-2 px-6 bg-red-600 text-white font-semibold rounded-lg">Acknowledge</button>
+        </div>
+    </div>
+
+    <!-- Gemini Loading/Result Modal -->
+    <div id="gemini-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="gemini-title" class="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-blue-500">✨ Gemini AI Assistant</h2>
+                <button id="close-gemini-btn" class="text-2xl font-bold text-gray-500 hover:text-gray-800">&times;</button>
+            </div>
+            <div id="gemini-content">
+                <!-- Loading indicator or results will be shown here -->
+                <div class="flex items-center justify-center p-8">
+                    <i class="fas fa-spinner fa-spin text-4xl text-blue-500"></i>
+                    <p class="ml-4 text-lg">Generating insights...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Location Picker Modal -->
+    <div id="location-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 flex flex-col" style="height: 80vh;">
+            <h2 class="text-xl font-bold mb-4">Pinpoint Your Location</h2>
+            <p class="text-sm text-gray-600 mb-4">Click on the map or drag the marker to set your precise location for receiving targeted alerts.</p>
+            <div id="location-map" class="flex-grow rounded-md border"></div>
+            <div class="flex justify-end space-x-3 pt-4 mt-4">
+                 <button type="button" id="cancel-location-btn" class="py-2 px-4 bg-gray-200 text-gray-700 rounded-md">Cancel</button>
+                <button type="button" id="confirm-location-btn" class="py-2 px-4 text-white btn-primary rounded-md flex items-center">
+                    <i class="fas fa-check mr-2"></i>Confirm Location
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ******************** JAVASCRIPT LOGIC ******************** -->
+    <script type="module">
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- STATE MANAGEMENT ---
+            const state = {
+                currentUser: null, // { email, role, location, phone }
+                isOnline: navigator.onLine,
+                currentView: 'login', // 'login' or 'dashboard'
+                isRegisterMode: false,
+                reports: [],
+                map: null,
+                markers: [],
+                heatmapLayer: null,
+                charts: {},
+                geolocation: { lat: 17.6868, lon: 83.2185 }, // Default: Visakhapatnam
+                registrationLocation: null
+            };
+
+            let locationPicker = {
+                map: null,
+                marker: null
+            };
+            
+            // --- MOCK DATABASE ---
+            const MONGO_API = {
+                _users: JSON.parse(localStorage.getItem('mongo_users')) || [
+                    { email: 'citizen@incois.gov.in', password: 'password123', role: 'Citizen', phone: '1234567890', location: { lat: 17.7, lon: 83.2 } },
+                    { email: 'official@incois.gov.in', password: 'password123', role: 'Official', phone: '0987654321', location: { lat: 17.8, lon: 83.3 } },
+                    { email: 'analyst@incois.gov.in', password: 'password123', role: 'Analyst', phone: '1122334455', location: { lat: 17.6, lon: 83.1 } }
+                ],
+                _reports: JSON.parse(localStorage.getItem('mongo_reports')) || [
+                    { id: 1, userId: 'citizen@incois.gov.in', eventType: 'High Waves', description: 'Very high waves seen at RK Beach. The water is coming much further up the shore than usual and seems to be getting stronger. Several small fishing boats have been damaged.', lat: 17.7085, lon: 83.3275, timestamp: new Date(Date.now() - 3600000).toISOString(), source: 'crowd' },
+                    { id: 2, userId: 'citizen@incois.gov.in', eventType: 'Coastal Flooding', description: 'Water entering the fishing village near Rushikonda.', lat: 17.782, lon: 83.375, timestamp: new Date(Date.now() - 7200000).toISOString(), source: 'crowd' },
+                    { id: 3, eventType: 'High Waves', lat: 17.71, lon: 83.33, timestamp: new Date().toISOString(), source: 'crowd' },
+                    { id: 4, eventType: 'High Waves', lat: 17.712, lon: 83.331, timestamp: new Date().toISOString(), source: 'crowd' },
+                    { id: 5, eventType: 'High Waves', lat: 17.711, lon: 83.332, timestamp: new Date().toISOString(), source: 'crowd' },
+                    { id: 6, eventType: 'High Waves', lat: 17.713, lon: 83.329, timestamp: new Date().toISOString(), source: 'crowd' },
+                ],
+                _socialMedia: JSON.parse(localStorage.getItem('mongo_social')) || [
+                     { id: 101, text: 'Huge waves at Visakhapatnam beach, stay safe everyone! #VizagRains #Cyclone', source: 'social', lat: 17.71, lon: 83.33, sentiment: 'Negative', keyword: 'Huge waves', timestamp: new Date().toISOString() },
+                     { id: 102, text: 'Is there a tsunami warning for Andhra coast? Hearing rumors.', source: 'social', lat: 17.69, lon: 83.22, sentiment: 'Negative', keyword: 'Tsunami warning', timestamp: new Date().toISOString() },
+                     { id: 103, text: 'The sea is very rough today near RK Beach. #AndhraPradesh', source: 'social', lat: 17.71, lon: 83.33, sentiment: 'Negative', keyword: 'Rough sea', timestamp: new Date().toISOString() },
+                     { id: 104, text: 'Stay away from the coast, officials are giving warnings. #Vizag', source: 'social', lat: 17.71, lon: 83.33, sentiment: 'Neutral', keyword: 'Warnings', timestamp: new Date().toISOString() },
+                     { id: 105, text: 'Just saw some flooding near the port. #CycloneAlert', source: 'social', lat: 17.71, lon: 83.33, sentiment: 'Negative', keyword: 'Flooding', timestamp: new Date().toISOString() },
+                ],
+                
+                async findUser(email) { return this._users.find(u => u.email === email); },
+                async createUser(userData) {
+                    this._users.push(userData);
+                    localStorage.setItem('mongo_users', JSON.stringify(this._users));
+                    return userData;
+                },
+                async getReports() { return [...this._reports, ...this._socialMedia]; },
+                async createReport(reportData) {
+                    this._reports.push(reportData);
+                    localStorage.setItem('mongo_reports', JSON.stringify(this._reports));
+                    checkForAlerts(reportData.lat, reportData.lon);
+                    return reportData;
+                },
+            };
+            
+            // --- DOM SELECTORS ---
+            const mainContent = document.getElementById('main-content');
+            const userSessionContainer = document.getElementById('user-session');
+            const offlineIndicator = document.getElementById('offline-indicator');
+            const geminiModal = document.getElementById('gemini-modal');
+            const locationModal = document.getElementById('location-modal');
+            
+            // --- GEMINI API INTEGRATION ---
+            const callGeminiAPI = async (prompt, useGrounding = false) => {
+                const apiKey = ""; // Canvas will provide this
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                };
+
+                if (useGrounding) {
+                    payload.tools = [{ "google_search": {} }];
+                }
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`API Error: ${response.statusText}`);
+                    }
+                    const result = await response.json();
+                    return result.candidates?.[0]?.content?.parts?.[0]?.text || "Could not generate a response.";
+                } catch (error) {
+                    console.error("Gemini API call failed:", error);
+                    return "Error connecting to the AI service.";
+                }
+            };
+
+            const toggleGeminiModal = (show, title = '✨ Gemini AI Assistant') => {
+                const modalTitle = geminiModal.querySelector('#gemini-title');
+                const modalContent = geminiModal.querySelector('#gemini-content');
+                modalTitle.textContent = title;
+                if (show) {
+                    modalContent.innerHTML = `<div class="flex items-center justify-center p-8"><i class="fas fa-spinner fa-spin text-4xl text-blue-500"></i><p class="ml-4 text-lg">Generating insights...</p></div>`;
+                    geminiModal.classList.remove('hidden');
+                } else {
+                    geminiModal.classList.add('hidden');
+                }
+            };
+            
+            const handleSummarizeReport = async (reportId) => {
+                const report = state.reports.find(r => r.id == reportId);
+                if (!report || !report.description) return;
+                
+                const targetElement = document.getElementById(`summary-${reportId}`);
+                targetElement.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Generating...`;
+                
+                const prompt = `Summarize the following hazard report into a single, concise sentence for a disaster management official. Focus on the key event and location. Report: "${report.description}"`;
+                const summary = await callGeminiAPI(prompt);
+                
+                targetElement.innerHTML = `<i class="fas fa-lightbulb text-yellow-500 mr-2"></i>${summary}`;
+            };
+
+            const handleSuggestActions = async () => {
+                toggleGeminiModal(true, '✨ AI Actionable Insights');
+                const prompt = `Generate a brief, bulleted list of immediate, actionable recommendations for a disaster management team in Visakhapatnam, India, responding to a potential coastal hazard event. The current situation is based on multiple citizen and social media reports of "High Waves" and "Coastal Flooding". Base your recommendations on standard operating procedures for this type of event and include any relevant local considerations.`;
+                const recommendations = await callGeminiAPI(prompt, true);
+                
+                const contentEl = geminiModal.querySelector('#gemini-content');
+                contentEl.innerHTML = `<div class="prose max-w-none">${recommendations.replace(/\*/g, '•')}</div>`;
+            };
+
+            // --- LOCATION PICKER LOGIC ---
+            const toggleLocationModal = (show) => {
+                locationModal.classList.toggle('hidden', !show);
+                if (show && !locationPicker.map) {
+                    setTimeout(initLocationPickerMap, 100);
+                }
+            };
+
+            const initLocationPickerMap = () => {
+                const initialCoords = state.registrationLocation ? [state.registrationLocation.lat, state.registrationLocation.lon] : [17.6868, 83.2185];
+                locationPicker.map = L.map('location-map').setView(initialCoords, 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap'
+                }).addTo(locationPicker.map);
+
+                locationPicker.marker = L.marker(initialCoords, { draggable: true }).addTo(locationPicker.map);
+
+                locationPicker.map.on('click', (e) => {
+                    locationPicker.marker.setLatLng(e.latlng);
+                });
+            };
+
+            const handleConfirmLocation = () => {
+                const { lat, lng } = locationPicker.marker.getLatLng();
+                state.registrationLocation = { lat, lon: lng };
+                document.getElementById('reg-location-display').textContent = `Location Selected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                toggleLocationModal(false);
+            };
+
+            // --- REPORT SUBMISSION & MODALS ---
+            const toggleModal = (show) => {
+                const modal = document.getElementById('report-modal');
+                modal.classList.toggle('hidden', !show);
+                if (show) {
+                    resetReportForm();
+                    getGeolocation();
+                }
+            };
+
+            const resetReportForm = () => {
+                document.getElementById('report-form').reset();
+                document.getElementById('file-name').textContent = '';
+                document.getElementById('geolocation-status').innerHTML = '<i class="fas fa-map-marker-alt mr-1"></i> Detecting your location...';
+                document.getElementById('offline-save-msg').classList.add('hidden');
+            };
+
+            const getGeolocation = (elementId = 'geolocation-status') => {
+                const statusEl = document.getElementById(elementId);
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            state.geolocation = { lat: position.coords.latitude, lon: position.coords.longitude };
+                            if (statusEl) statusEl.innerHTML = `<i class="fas fa-check-circle text-green-500 mr-1"></i> Location captured successfully.`;
+                        },
+                        () => { if (statusEl) statusEl.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500 mr-1"></i> Could not get location.`; }
+                    );
+                } else { if (statusEl) statusEl.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500 mr-1"></i> Geolocation not supported by your browser.`; }
+            };
+
+            const handleReportSubmit = async (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const reportData = {
+                    id: Date.now(),
+                    userId: state.currentUser.email,
+                    eventType: form.eventType.value,
+                    description: form.description.value,
+                    lat: state.geolocation.lat,
+                    lon: state.geolocation.lon,
+                    timestamp: new Date().toISOString(),
+                    source: 'crowd',
+                };
+
+                if (state.isOnline) {
+                    await MONGO_API.createReport(reportData);
+                    alert('Report submitted successfully!');
+                    fetchAndRenderReports();
+                } else {
+                    const offlineReports = JSON.parse(localStorage.getItem('offlineReports')) || [];
+                    offlineReports.push(reportData);
+                    localStorage.setItem('offlineReports', JSON.stringify(offlineReports));
+                    document.getElementById('offline-save-msg').classList.remove('hidden');
+                    alert('Report saved locally. It will be submitted when you are back online.');
+                }
+                toggleModal(false);
+            };
+
+            // --- AUTHENTICATION & UI ---
+            const updateAuthFormUI = () => {
+                const form = mainContent.querySelector('#auth-form');
+                if (!form) return;
+                const title = mainContent.querySelector('#form-title');
+                const submitBtn = form.querySelector('#submit-button');
+                const switchLink = mainContent.querySelector('#switch-auth-mode');
+                const registerFields = form.querySelector('#register-fields-container');
+                form.querySelector('#auth-error').textContent = '';
+                if (!title || !submitBtn || !switchLink || !registerFields) return;
+
+                if (state.isRegisterMode) {
+                    title.textContent = 'Create a New Account';
+                    submitBtn.textContent = 'Register';
+                    switchLink.innerHTML = 'Already have an account? Login';
+                    registerFields.classList.remove('hidden');
+                    const selectLocationBtn = form.querySelector('#select-location-btn');
+                    if (selectLocationBtn) {
+                        selectLocationBtn.addEventListener('click', () => toggleLocationModal(true));
+                    }
+                } else {
+                    title.textContent = 'Login to Your Account';
+                    submitBtn.textContent = 'Login';
+                    switchLink.innerHTML = "Don't have an account? Register";
+                    registerFields.classList.add('hidden');
+                }
+            };
+
+            const toggleAuthMode = (e) => {
+                e.preventDefault();
+                state.isRegisterMode = !state.isRegisterMode;
+                updateAuthFormUI();
+            };
+
+            const handleLogout = () => {
+                state.currentUser = null;
+                localStorage.removeItem('incoisUser');
+                renderLogin();
+            };
+            
+            // --- ALERTS & OFFLINE LOGIC ---
+            const showHighActivityAlert = () => {
+                 const alertList = document.getElementById('alert-list');
+                 if(!alertList) return;
+                 alertList.innerHTML = `<li class="p-2 bg-red-100 border-l-4 border-red-500">
+                    <p class="font-bold">High activity detected near RK Beach.</p>
+                    <p>Multiple reports of "High Waves".</p>
+                    <button id="suggest-actions-btn" class="gemini-btn mt-2 w-full">✨ Suggest Actions</button>
+                 </li>`;
+                 document.getElementById('suggest-actions-btn').addEventListener('click', handleSuggestActions);
+            };
+
+            const checkForAlerts = async (lat, lon) => {
+                const allReports = await MONGO_API.getReports();
+                const nearbyReports = allReports.filter(r => {
+                    const dist = Math.sqrt(Math.pow(r.lat - lat, 2) + Math.pow(r.lon - lon, 2));
+                    return dist < 0.1; // Approx 11km radius
+                });
+                
+                const crowdCount = nearbyReports.filter(r => r.source === 'crowd').length;
+                const socialCount = nearbyReports.filter(r => r.source === 'social').length;
+                
+                if (crowdCount >= 5 && socialCount >= 5) {
+                    showHighActivityAlert();
+                }
+            };
+
+            const syncOfflineReports = async () => {
+                const offlineReports = JSON.parse(localStorage.getItem('offlineReports')) || [];
+                if (offlineReports.length > 0 && state.isOnline) {
+                    for (const report of offlineReports) {
+                        await MONGO_API.createReport(report);
+                    }
+                    localStorage.removeItem('offlineReports');
+                    alert(`${offlineReports.length} offline report(s) have been synced successfully!`);
+                    if (state.currentView === 'dashboard') {
+                        fetchAndRenderReports();
+                    }
+                }
+            };
+
+            // --- DASHBOARD & DATA RENDERING ---
+             const renderReportList = () => {
+                const listEl = document.getElementById('report-list');
+                const countEl = document.getElementById('report-count');
+                if (!listEl || !countEl) return;
+                listEl.innerHTML = '';
+                
+                const reportsToDisplay = state.reports.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                countEl.textContent = reportsToDisplay.length;
+
+                if (reportsToDisplay.length === 0) {
+                    listEl.innerHTML = '<li class="text-center text-gray-500 py-4">No reports match filters.</li>';
+                    return;
+                }
+
+                reportsToDisplay.forEach(report => {
+                    const li = document.createElement('li');
+                    li.className = 'p-3 bg-gray-50 rounded-lg border';
+                    li.dataset.id = report.id;
+
+                    const icon = report.source === 'crowd' ?
+                        '<i class="fas fa-bullhorn text-blue-500"></i>' :
+                        '<i class="fab fa-twitter text-sky-500"></i>';
+
+                    let geminiButton = '';
+                    if (state.currentUser.role !== 'Citizen' && report.source === 'crowd' && report.description) {
+                        geminiButton = `<button data-id="${report.id}" class="summarize-btn gemini-btn mt-2">✨ Summarize Report</button>`;
+                    }
+
+                    li.innerHTML = `
+                        <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('map')._leaflet_map.flyTo([${report.lat}, ${report.lon}], 14);">
+                            <div class="font-bold">${icon} ${report.eventType || report.keyword}</div>
+                            <div class="text-xs text-gray-500">${new Date(report.timestamp).toLocaleTimeString()}</div>
+                        </div>
+                        <p class="text-sm text-gray-700 mt-1">${report.description || report.text}</p>
+                        <div id="summary-${report.id}" class="text-sm mt-2 p-2 bg-blue-50 border-l-4 border-blue-400 rounded-r-lg text-gray-800"></div>
+                        ${geminiButton}
+                    `;
+                    listEl.appendChild(li);
+                });
+
+                document.querySelectorAll('.summarize-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => handleSummarizeReport(e.target.dataset.id));
+                });
+            };
+
+            const renderMapMarkers = () => {
+                if (!state.map) return;
+                state.markers.forEach(m => state.map.removeLayer(m));
+                state.markers = [];
+
+                const crowdIcon = L.divIcon({ html: '<i class="fas fa-circle text-blue-500 text-2xl opacity-80"></i>', className: 'bg-transparent border-0', iconSize: [24, 24] });
+                const socialIcon = L.divIcon({ html: '<i class="fas fa-circle text-yellow-500 text-2xl opacity-80"></i>', className: 'bg-transparent border-0', iconSize: [24, 24] });
+
+                state.reports.forEach(report => {
+                    const icon = report.source === 'crowd' ? crowdIcon : socialIcon;
+                    const marker = L.marker([report.lat, report.lon], { icon }).addTo(state.map);
+                    marker.bindPopup(`<b>${report.eventType || 'Social Media Post'}</b><br>${report.description || report.text}`);
+                    state.markers.push(marker);
+                });
+            };
+
+            const renderSocialMediaDashboard = () => {
+                const sentimentCtx = document.getElementById('sentiment-chart')?.getContext('2d');
+                const keywordCloudEl = document.getElementById('keyword-cloud');
+                const liveFeedEl = document.getElementById('live-feed');
+                if (!sentimentCtx || !keywordCloudEl || !liveFeedEl) return;
+
+                const socialPosts = state.reports.filter(r => r.source === 'social');
+                
+                if(state.charts.sentiment) state.charts.sentiment.destroy();
+                const sentimentCounts = socialPosts.reduce((acc, post) => {
+                    acc[post.sentiment] = (acc[post.sentiment] || 0) + 1;
+                    return acc;
+                }, { Positive: 0, Neutral: 0, Negative: 0 });
+
+                state.charts.sentiment = new Chart(sentimentCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Positive', 'Neutral', 'Negative'],
+                        datasets: [{ data: [sentimentCounts.Positive, sentimentCounts.Neutral, sentimentCounts.Negative], backgroundColor: ['#4caf50', '#ffeb3b', '#f44336'] }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+                });
+
+                keywordCloudEl.innerHTML = '';
+                const keywords = [...new Set(socialPosts.map(p => p.keyword).filter(Boolean))];
+                keywords.forEach(kw => {
+                    const span = document.createElement('span');
+                    span.textContent = kw;
+                    span.className = 'font-bold p-1 text-lg text-gray-600';
+                    keywordCloudEl.appendChild(span);
+                });
+
+                liveFeedEl.innerHTML = '';
+                socialPosts.slice(0, 5).forEach(post => {
+                    const div = document.createElement('div');
+                    div.className = 'p-2 border-b';
+                    div.innerHTML = `<p class="text-gray-800">${post.text}</p><p class="text-xs text-blue-500">- @Anonymous</p>`;
+                    liveFeedEl.appendChild(div);
+                });
+            };
+
+            const renderAnalystCharts = () => {
+                const historicalCtx = document.getElementById('historical-trends-chart')?.getContext('2d');
+                if (!historicalCtx) return;
+                if (state.charts.historical) state.charts.historical.destroy();
+                
+                state.charts.historical = new Chart(historicalCtx, {
+                    type: 'line',
+                    data: {
+                        labels: ['3 Days Ago', '2 Days Ago', 'Yesterday', 'Today'],
+                        datasets: [{ label: 'Reports per Day', data: [5, 8, 12, state.reports.length], tension: 0.1, borderColor: 'rgb(75, 192, 192)' }]
+                    },
+                    options: { scales: { y: { beginAtZero: true } }, plugins: { title: { display: true, text: 'Historical Report Trends' } } }
+                });
+            };
+
+            const initMap = () => {
+                if (state.map) state.map.remove();
+                state.map = L.map('map').setView([state.geolocation.lat, state.geolocation.lon], 11);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                }).addTo(state.map);
+            };
+
+            const renderHeatmap = () => {
+                if (!state.map) return;
+                const heatPoints = state.reports.map(r => [r.lat, r.lon, 0.5]);
+                if (state.heatmapLayer) state.map.removeLayer(state.heatmapLayer);
+                state.heatmapLayer = L.heatLayer(heatPoints, { radius: 25, blur: 15, maxZoom: 12 }).addTo(state.map);
+            };
+
+            const fetchAndRenderReports = async () => {
+                const filters = {
+                    event: document.getElementById('filter-event')?.value || 'all',
+                    source: document.getElementById('filter-source')?.value || 'all',
+                };
+                let allData = await MONGO_API.getReports();
+                
+                state.reports = allData.filter(r => 
+                    (filters.event === 'all' || r.eventType === filters.event) &&
+                    (filters.source === 'all' || r.source === filters.source)
+                );
+
+                renderReportList();
+                renderMapMarkers();
+                renderHeatmap();
+                if (state.currentUser.role !== 'Citizen') renderSocialMediaDashboard();
+                checkForAlerts(17.71, 83.33); // Check for alerts in a high-density area on load
+            };
+            
+            const renderCommonFilters = (container) => {
+                container.innerHTML = `
+                    <h3 class="font-semibold">Filter Reports</h3>
+                    <div>
+                        <label for="filter-event" class="block text-sm font-medium">Event Type</label>
+                        <select id="filter-event" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                             <option value="all">All Event Types</option> <option>Tsunami</option> <option>Storm Surge</option> <option>High Waves</option> <option>Coastal Flooding</option> <option>Other</option>
+                        </select>
+                    </div>
+                     <div>
+                        <label for="filter-source" class="block text-sm font-medium">Data Source</label>
+                        <select id="filter-source" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                            <option value="all">All Sources</option> <option value="crowd">Crowdsourced</option> <option value="social">Social Media</option>
+                        </select>
+                    </div>
+                    <button id="apply-filters-btn" class="w-full py-2 px-4 text-white btn-primary rounded-md">Apply Filters</button>
+                `;
+                document.getElementById('apply-filters-btn').addEventListener('click', fetchAndRenderReports);
+            };
+
+            const renderCommonReportList = (container) => {
+                 container.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                         <h3 class="font-semibold">Recent Reports (<span id="report-count">0</span>)</h3>
+                         <button id="refresh-reports-btn" title="Refresh Reports"><i class="fas fa-sync-alt"></i></button>
+                    </div>
+                    <ul id="report-list" class="space-y-3"></ul>
+                `;
+                document.getElementById('refresh-reports-btn').addEventListener('click', fetchAndRenderReports);
+            };
+            
+            const renderRoleSpecificPanel = () => {
+                const panelContainer = document.getElementById('left-panel-content');
+                let templateId;
+                switch(state.currentUser.role) {
+                    case 'Official': templateId = 'official-panel-template'; break;
+                    case 'Analyst': templateId = 'analyst-panel-template'; break;
+                    default: templateId = 'citizen-panel-template';
+                }
+                const template = document.getElementById(templateId).content.cloneNode(true);
+                panelContainer.innerHTML = '';
+                panelContainer.appendChild(template);
+
+                renderCommonFilters(panelContainer.querySelector('#filters'));
+                renderCommonReportList(panelContainer.querySelector('#report-list-container'));
+
+                if (state.currentUser.role === 'Citizen') {
+                    panelContainer.querySelector('#new-report-btn').addEventListener('click', () => toggleModal(true));
+                } else if (state.currentUser.role === 'Analyst') {
+                    renderAnalystCharts();
+                }
+            };
+
+            const renderDashboard = () => {
+                state.currentView = 'dashboard';
+                const template = document.getElementById('dashboard-template').content.cloneNode(true);
+                mainContent.innerHTML = '';
+                mainContent.appendChild(template);
+                
+                userSessionContainer.innerHTML = `
+                    <div class="text-right"><p class="font-semibold">${state.currentUser.email}</p><p class="text-sm opacity-80">${state.currentUser.role}</p></div>
+                    <button id="logout-btn" class="ml-4 py-2 px-3 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md">Logout</button>
+                `;
+                document.getElementById('logout-btn').addEventListener('click', handleLogout);
+
+                renderRoleSpecificPanel();
+                initMap();
+                fetchAndRenderReports();
+
+                const socialDashboard = document.getElementById('social-media-dashboard');
+                const mapContainer = document.getElementById('map-container');
+                if (state.currentUser.role === 'Citizen') {
+                    socialDashboard.style.display = 'none';
+                    mapContainer.classList.replace('h-2/3', 'h-full');
+                }
+            };
+            
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const email = form.email.value;
+                const password = form.password.value;
+                const errorEl = form.querySelector('#auth-error');
+                errorEl.textContent = '';
+
+                if (state.isRegisterMode) {
+                    const phoneInput = form.phone.value;
+                    const role = form.role.value;
+                    if (!phoneInput || !state.registrationLocation) {
+                        errorEl.textContent = 'Phone number and location access are required.';
+                        return;
+                    }
+                    const fullPhoneNumber = '+91' + phoneInput.replace(/\s/g, '');
+                    const userExists = await MONGO_API.findUser(email);
+                    if (userExists) {
+                        errorEl.textContent = 'User with this email already exists.';
+                        return;
+                    }
+                    await MONGO_API.createUser({ email, password, role, phone: fullPhoneNumber, location: state.registrationLocation });
+                    alert('Registration successful! Please login.');
+                    state.isRegisterMode = false;
+                    updateAuthFormUI();
+                    form.reset();
+                } else {
+                    const user = await MONGO_API.findUser(email);
+                    if (user && user.password === password) {
+                        state.currentUser = user;
+                        localStorage.setItem('incoisUser', JSON.stringify(state.currentUser));
+                        renderDashboard();
+                    } else {
+                        errorEl.textContent = 'Invalid email or password.';
+                    }
+                }
+            };
+            
+            const renderLogin = () => {
+                state.currentView = 'login';
+                const template = document.getElementById('login-template').content.cloneNode(true);
+                mainContent.innerHTML = '';
+                mainContent.appendChild(template);
+                userSessionContainer.innerHTML = '';
+                mainContent.querySelector('#auth-form').addEventListener('submit', handleAuth);
+                mainContent.querySelector('#switch-auth-mode').addEventListener('click', toggleAuthMode);
+                updateAuthFormUI();
+            };
+            
+            const initApp = () => {
+                window.addEventListener('online', () => (state.isOnline = true, offlineIndicator.classList.add('hidden'), syncOfflineReports()));
+                window.addEventListener('offline', () => (state.isOnline = false, offlineIndicator.classList.remove('hidden')));
+                
+                const savedUser = localStorage.getItem('incoisUser');
+                if (savedUser) {
+                    state.currentUser = JSON.parse(savedUser);
+                    renderDashboard();
+                } else {
+                    renderLogin();
+                }
+                
+                // --- SETUP GLOBAL EVENT LISTENERS FOR MODALS ---
+                document.getElementById('close-modal-btn').addEventListener('click', () => toggleModal(false));
+                document.getElementById('cancel-report-btn').addEventListener('click', () => toggleModal(false));
+                document.getElementById('report-form').addEventListener('submit', handleReportSubmit);
+                document.getElementById('close-gemini-btn').addEventListener('click', () => toggleGeminiModal(false));
+                document.getElementById('file-upload').addEventListener('change', (e) => {
+                    if(e.target.files.length > 0) document.getElementById('file-name').textContent = e.target.files[0].name;
+                });
+                document.getElementById('close-alert-btn').addEventListener('click', () => {
+                    document.getElementById('alert-modal').classList.add('hidden');
+                });
+                document.getElementById('confirm-location-btn').addEventListener('click', handleConfirmLocation);
+                document.getElementById('cancel-location-btn').addEventListener('click', () => toggleLocationModal(false));
+            };
+            
+            // --- KICKSTART THE APP ---
+            initApp();
+        });
+    </script>
+
+</body>
+</html>
+
+
